@@ -1,0 +1,68 @@
+digraph ClientFlow {
+  graph [
+    label="客户端程序流程  ·  NEXUS CHAT", labelloc=t, labeljust=c,
+    fontname="Noto Sans CJK SC", fontsize=22, fontcolor="#172B4D",
+    bgcolor="#FFFFFF", pad="0.34", nodesep="0.34", ranksep="0.56",
+    rankdir=TB, splines=polyline, outputorder=edgesfirst, newrank=true
+  ];
+  node [
+    fontname="Noto Sans CJK SC", fontsize=12, fontcolor="#243547",
+    shape=box, style="rounded,filled", fillcolor="#FFFFFF",
+    color="#A7B6C7", penwidth=1.2, margin="0.24,0.15"
+  ];
+  edge [
+    color="#70859B", penwidth=1.25, arrowsize=0.72,
+    fontname="Noto Sans CJK SC", fontsize=10, fontcolor="#52677E"
+  ];
+
+  start [label="启动客户端", shape=oval, style=filled, fillcolor="#D8F3ED", color="#249A86", fontcolor="#08695C", penwidth=1.55];
+  connect [label="读取地址、端口和用户名\n初始化 Winsock · 创建 Socket 并连接", fillcolor="#F2F7FC"];
+  hello [label="发送 HELLO · 等待服务器响应"];
+  login [label="收到 WELCOME？", shape=diamond, style=filled, fillcolor="#FFF8E9", color="#DCB56B", margin="0.22,0.12"];
+  fail [label="ERROR / 连接失败\n提示原因并退出", fillcolor="#FFF0F0", color="#DBA2A2"];
+  ready [label="登录成功 · 进入聊天界面\n启动接收线程", fillcolor="#D8F3ED", color="#249A86"];
+
+  start -> connect -> hello -> login;
+  login -> fail [label="否", color="#C98080", fontcolor="#B56868"];
+  login -> ready [label="是", color="#249A86", fontcolor="#16806D"];
+  {rank=same; fail; ready;}
+  fail -> ready [style=invis, weight=1];
+
+  subgraph cluster_tx {
+    label="主线程  ·  发送与命令处理";
+    labelloc=t; fontname="Noto Sans CJK SC"; fontsize=15;
+    fontcolor="#174B77"; color="#D3E2F2";
+    fillcolor="#F7FAFE"; style="rounded,filled"; penwidth=1.2; margin=20;
+    tx_input [label="读取用户输入\n（持续循环）", fillcolor="#E6F0FB", color="#9BC1E4"];
+    tx_branch [label="输入类型", shape=diamond, style=filled, fillcolor="#FFFFFF", color="#9BC1E4", margin="0.18,0.10"];
+    tx_chat [label="普通消息 / /burst N\n发送 CHAT（带递增序号）\n然后继续读取输入"];
+    tx_cmd [label="/list  →  发送 LIST_REQUEST\n/help  →  显示本地帮助\n然后继续读取输入"];
+    tx_quit [label="/quit 或输入结束\n发送 GOODBYE · 退出", fillcolor="#FFF0F0", color="#DBA2A2"];
+    tx_input -> tx_branch;
+    tx_branch -> tx_chat [label="聊天"];
+    tx_branch -> tx_cmd [label="命令"];
+    tx_branch -> tx_quit [label="退出"];
+    {rank=same; tx_chat; tx_cmd; tx_quit;}
+    tx_chat -> tx_cmd -> tx_quit [style=invis, weight=2];
+  }
+
+  subgraph cluster_rx {
+    label="接收线程  ·  异步接收与显示";
+    labelloc=t; fontname="Noto Sans CJK SC"; fontsize=15;
+    fontcolor="#08705F"; color="#C4E5DC";
+    fillcolor="#F6FCFA"; style="rounded,filled"; penwidth=1.2; margin=20;
+    rx_frame [label="recv_frame()\n循环读取完整协议帧", fillcolor="#E3F5EF", color="#9DD6C5"];
+    rx_decode [label="解析消息类型与字段\nCHAT_DELIVERY · SYSTEM\nUSER_LIST · ERROR"];
+    rx_show [label="显示时间戳、聊天内容、在线用户\n或系统 / 错误提示；继续接收"];
+    rx_close [label="连接关闭或接收失败\n提示断开状态", fillcolor="#FFF0F0", color="#DBA2A2"];
+    rx_frame -> rx_decode -> rx_show;
+    rx_decode -> rx_close [style=dashed, label="断开"];
+    {rank=same; rx_show; rx_close;}
+    rx_show -> rx_close [style=invis, weight=1];
+  }
+
+  ready -> tx_input [lhead=cluster_tx, color="#548BB8", label="主线程"];
+  ready -> rx_frame [lhead=cluster_rx, color="#249A86", label="并行运行"];
+  {rank=same; tx_input; rx_frame;}
+  tx_input -> rx_frame [style=invis, weight=20];
+}

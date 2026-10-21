@@ -1,0 +1,62 @@
+digraph NexusServer {
+  graph [
+    layout=neato, overlap=true, splines=polyline, outputorder=edgesfirst,
+    bgcolor="white", pad="0.25", dpi=160,
+    fontname="Noto Sans CJK SC", fontsize=20
+  ];
+  node [
+    fontname="Noto Sans CJK SC", fontsize=14, fontcolor="#24364B",
+    shape=box, style="rounded,filled", fillcolor="white",
+    color="#A6B6C8", penwidth=1.35, margin="0.12,0.08",
+    fixedsize=true
+  ];
+  edge [fontname="Noto Sans CJK SC", fontsize=11,
+        color="#647991", fontcolor="#53667E", penwidth=1.35, arrowsize=0.72];
+
+  // All positions are manually specified in points for neato -n2.
+  // Keeps the aspect ratio near 1.6 so text remains readable in A4 reports.
+  title [shape=plaintext, label="NEXUS CHAT  ·  服务器程序流程", pos="625,782!", fontsize=23, fontcolor="#203654", width=5.6, height=0.40];
+  main_label [shape=plaintext, label="主线程  /  监听与分发", pos="125,706!", fontsize=13, fontcolor="#275D8C", width=3.2, height=0.38];
+  worker_label [shape=plaintext, label="客户端工作线程  /  注册与消息处理", pos="225,554!", fontsize=13, fontcolor="#14826B", width=4.8, height=0.38];
+  footnote [shape=plaintext, label="注：CHAT、LIST_REQUEST 处理完成后返回 recv_frame()；主线程继续 accept() 新连接。", pos="620,60!", fontsize=11, fontcolor="#5C7086", width=10.8, height=0.30];
+
+  start [label="启动服务器", shape=ellipse, fillcolor="#D8F4ED", color="#20A087", pos="112,638!", width=1.55, height=0.62];
+  init [label="初始化 Winsock\n创建 TCP Socket", fillcolor="#EFF6FE", pos="336,638!", width=2.24, height=0.78];
+  bind [label="bind() 绑定端口\nlisten() 开始监听", fillcolor="#EFF6FE", pos="575,638!", width=2.24, height=0.78];
+  accept [label="accept() 等待连接", fillcolor="#E1EEFC", color="#95BDE5", pos="802,638!", width=2.12, height=0.78];
+  spawn [label="创建会话对象\n启动独立工作线程", fillcolor="#E1EEFC", color="#95BDE5", pos="1074,638!", width=2.58, height=0.78];
+
+  hello [label="接收 HELLO\n解析用户名", fillcolor="#E8F8F3", color="#8FD3BE", pos="1074,478!", width=2.35, height=0.77];
+  check [label="用户名合法、唯一\n且未超过人数上限？", shape=diamond, style="filled", fillcolor="#FFF7E8", color="#D9AC5A", pos="815,478!", width=2.55, height=1.04];
+  welcome [label="发送 WELCOME\n注册在线用户", fillcolor="#E8F8F3", color="#8FD3BE", pos="545,478!", width=2.22, height=0.78];
+  joined [label="广播 SYSTEM 加入通知\n更新 USER_LIST", fillcolor="#F1FAF7", pos="255,478!", width=2.76, height=0.78];
+  reject [label="发送 ERROR\n关闭连接并结束线程", fillcolor="#FFF1F1", color="#E6A1A1", pos="1080,395!", width=2.23, height=0.74];
+
+  recv [label="recv_frame()\n读取完整协议帧", fillcolor="#E1F4ED", color="#8FD3BE", pos="255,301!", width=2.54, height=0.78];
+  dispatch [label="帧类型 / 连接状态", shape=diamond, style="filled", fillcolor="#FFF7E8", color="#D9AC5A", pos="538,301!", width=2.60, height=0.98];
+
+  chat [label="CHAT\n校验字段与序号\n添加时间戳并广播", fillcolor="#F6FAFE", pos="823,364!", width=2.35, height=0.92];
+  list [label="LIST_REQUEST\n返回在线用户列表", fillcolor="#F6FAFE", pos="823,266!", width=2.35, height=0.78];
+  quit [label="GOODBYE / 异常断开\n移除会话并关闭 Socket", fillcolor="#FFF1F1", color="#E6A1A1", pos="823,170!", width=2.75, height=0.80];
+  leave [label="广播离开通知 SYSTEM\n更新 USER_LIST", fillcolor="#F1FAF7", pos="1090,170!", width=2.62, height=0.80];
+  end [label="工作线程结束", shape=ellipse, fillcolor="#EEF1F5", color="#9DABBC", pos="1090,95!", width=1.82, height=0.55];
+
+  // Top lane: main accept loop.
+  start -> init -> bind -> accept -> spawn;
+  // Logical accept loop is summarized in spawn; no long backward arrow.
+  spawn -> hello [color="#249B82", penwidth=1.65];
+
+  // Registration lane, read from right to left.
+  hello -> check;
+  check -> welcome [label="是", color="#249B82", fontcolor="#168570"];
+  check -> reject [label="否", color="#C97878", fontcolor="#B66B6B"];
+  welcome -> joined;
+  joined -> recv;
+
+  // Message lane, read left to right.
+  recv -> dispatch;
+  dispatch -> chat [label="聊天"];
+  dispatch -> list [label="查询"];
+  dispatch -> quit [label="退出 / 断开"];
+  quit -> leave -> end;
+}
