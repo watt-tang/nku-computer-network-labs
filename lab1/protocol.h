@@ -28,7 +28,9 @@ enum class Type : std::uint8_t {
     USER_LIST = 6,
     GOODBYE = 7,
     ERROR_MESSAGE = 8,
-    LIST_REQUEST = 9
+    LIST_REQUEST = 9,
+    PRIVATE_CHAT = 10,
+    PRIVATE_DELIVERY = 11
 };
 
 struct Frame {
@@ -38,7 +40,7 @@ struct Frame {
 
 inline bool is_valid_type(std::uint8_t value) {
     return value >= static_cast<std::uint8_t>(Type::HELLO) &&
-           value <= static_cast<std::uint8_t>(Type::LIST_REQUEST);
+           value <= static_cast<std::uint8_t>(Type::PRIVATE_DELIVERY);
 }
 
 class Writer {

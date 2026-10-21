@@ -173,6 +173,32 @@ void receive_loop(SOCKET socket) {
             print_chat(timestamp, sender, sequence, message);
             break;
         }
+        case chatproto::Type::PRIVATE_DELIVERY: {
+            chatproto::Reader reader(frame.payload);
+            std::uint64_t sequence = 0;
+            std::string timestamp, sender, recipient, message;
+            if (!reader.get_u64(sequence) || sequence == 0 ||
+                !reader.get_string(timestamp) || !reader.get_string(sender) ||
+                !reader.get_string(recipient) || !reader.get_string(message) ||
+                !reader.at_end() || timestamp.empty() || sender.empty() ||
+                recipient.empty() || sender.size() > chatproto::kMaxUsernameBytes ||
+                recipient.size() > chatproto::kMaxUsernameBytes || message.empty() ||
+                message.size() > chatproto::kMaxMessageBytes ||
+                contains_control_characters(timestamp) || contains_control_characters(sender) ||
+                contains_control_characters(recipient) || contains_control_characters(message) ||
+                (sender != g_username && recipient != g_username)) {
+                print_error("Malformed PRIVATE_DELIVERY frame received.");
+                g_connected.store(false);
+                break;
+            }
+            std::lock_guard<std::mutex> lock(g_output_mutex);
+            std::cout << (sender == g_username ? kCyan : kYellow)
+                      << "[" << timestamp << "] [PRIVATE "
+                      << (sender == g_username ? "OUT" : "IN") << "] "
+                      << sender << " -> " << recipient << kGray << " #" << sequence
+                      << kReset << ": " << message << "\n" << std::flush;
+            break;
+        }
         case chatproto::Type::SYSTEM: {
             chatproto::Reader reader(frame.payload);
             std::string timestamp, message;
@@ -249,6 +275,7 @@ void print_help() {
     print_plain(
         std::string(kCyan) + "Commands" + kReset + "\n"
         "  /help       Show this help\n"
+        "  /msg USER MESSAGE  Send a private message to an online user\n"
         "  /list       Request the current online-user list from the server\n"
         "  /burst N    Send N numbered test messages (1 <= N <= 500)\n"
         "  /quit       Leave the chat\n"
@@ -359,6 +386,7 @@ int main(int argc, char* argv[]) {
 
     std::thread receiver(receive_loop, socket);
     std::uint64_t outgoing_sequence = 0;
+    std::uint64_t private_sequence = 0;
 
     while (g_connected.load()) {
         std::cout << kCyan << "you> " << kReset << std::flush;
@@ -373,6 +401,36 @@ int main(int argc, char* argv[]) {
 
         if (line == "/help") {
             print_help();
+            continue;
+        }
+        if (line == "/msg" || line.rfind("/msg ", 0) == 0 ||
+            line.rfind("/msg\t", 0) == 0) {
+            const auto start = line.find_first_not_of(" \t", 4);
+            const auto separator = start == std::string::npos ? std::string::npos :
+                line.find_first_of(" \t", start);
+            if (separator == std::string::npos ||
+                trim_ascii_spaces(line.substr(separator + 1)).empty()) {
+                print_error("Usage: /msg <username> <nonempty message>");
+                continue;
+            }
+            const std::string target = line.substr(start, separator - start);
+            const std::string message = line.substr(separator + 1);
+            if (target.size() > chatproto::kMaxUsernameBytes ||
+                contains_control_characters(target) ||
+                message.size() > chatproto::kMaxMessageBytes ||
+                contains_control_characters(message)) {
+                print_error("Private target must be 1-48 UTF-8 bytes; message must be 1-4096 UTF-8 bytes, with no control characters.");
+                continue;
+            }
+            chatproto::Writer writer;
+            writer.put_u64(++private_sequence);
+            writer.put_string(target);
+            writer.put_string(message);
+            if (!chatproto::send_frame(socket,
+                    {chatproto::Type::PRIVATE_CHAT, std::move(writer.data)})) {
+                print_error("Failed to send private message. The connection may have closed.");
+                g_connected.store(false);
+            }
             continue;
         }
         if (line == "/list") {

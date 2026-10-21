@@ -2,7 +2,7 @@
 
 本项目依据课程《计算机网络》实验说明 PPT 的“编程实验 1：利用流式套接字编写聊天程序”要求设计。程序使用 **C++17 + Windows Winsock2 原生 Socket API + TCP + 多线程**，提供命令行客户端与服务器，支持中英文聊天、服务器时间戳、多人在线、在线用户列表、运行日志和消息序号检查。
 
-> **重要说明：** 本交付包含完整源码、协议文档、构建脚本和实验报告草稿。当前生成环境没有可用的 Windows SDK / MinGW-w64 交叉编译器，因此没有伪造或放入未经编译验证的 `.exe`。请在 Windows 环境运行 `build.bat` 生成老师要求提交的 `bin\server.exe` 和 `bin\client.exe`，实际测试后再补全报告中的运行结果与截图。
+> 本次已在 Windows 使用 MinGW-w64 实际运行 `build.bat`。构建及自动化测试结果见 `PRIVATE_CHAT_TEST_RESULTS.md`。
 
 ## 1. 文件结构
 
@@ -100,6 +100,7 @@ bin\client.exe 127.0.0.1 8888 Charlie
 |---|---|
 | `/help` | 显示命令说明 |
 | `/list` | 向服务器请求实时在线用户列表 |
+| `/msg 用户名 正文` | 定向私聊，保留正文内部空格 |
 | `/burst N` | 发送 1–500 条带编号的测试消息，便于检查应用层消息连续性 |
 | `/quit` | 正常退出聊天 |
 | 其他输入 | 作为聊天消息发送，支持中英文 |
@@ -107,6 +108,33 @@ bin\client.exe 127.0.0.1 8888 Charlie
 用户名限制为 1–48 个 UTF-8 字节；聊天消息限制为 1–4096 个 UTF-8 字节。服务器为聊天消息统一生成时间戳。服务器日志记录连接、断开、消息序号及成功执行的 Socket 发送次数。
 
 ## 5. 多人聊天测试
+
+### 私聊完整示例
+
+在 `lab1` 目录分别打开四个终端执行：
+
+```bat
+bin\server.exe 8888
+bin\client.exe 127.0.0.1 8888 Alice
+bin\client.exe 127.0.0.1 8888 Bob
+bin\client.exe 127.0.0.1 8888 Charlie
+```
+
+在 Alice 中输入：
+
+```text
+/msg Bob Hello Bob
+/msg Bob 你好，这条消息只有你和我能看到。 Hello  Bob
+/msg Nobody 测试目标不存在
+```
+
+Alice 显示带时间戳及私聊序号的 `[PRIVATE OUT] Alice -> Bob`，Bob 显示 `[PRIVATE IN] Alice -> Bob`，Charlie 不收到正文。普通文本仍向全体用户广播。目标匹配区分大小写；不支持向带空格的用户名发私聊。向自己私聊仅显示一次。
+
+`/msg`、`/msg Bob` 和空白正文会提示用法，不发送无效帧。目标不存在、离线或发送失败会向发送者返回清晰错误。正文内部连续空格保留。
+
+协议新增 PRIVATE_CHAT=10（请求）和 PRIVATE_DELIVERY=11（向双方投递），字段详见 `PROTOCOL_DESIGN.md`。私聊使用独立递增序号，群聊及 `/burst` 原有序号检查保持不变。
+
+私聊没有额外应用层送达确认机制；Socket 发送成功或发送者看到回显都不能保证对方已经阅读。功能实现服务器定向转发，不提供端到端加密，服务器可以读取正文。
 
 1. 启动服务器。
 2. 依次启动 Alice、Bob、Charlie 三个客户端。

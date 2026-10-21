@@ -89,6 +89,7 @@ struct ClientSession {
     std::mutex send_mutex;
     std::atomic<bool> alive{true};
     std::atomic<bool> registered{false};
+    std::uint64_t last_private_sequence = 0;
     std::uint64_t last_client_sequence = 0;  // Accessed only by this session's worker.
 
     bool send_frame(const chatproto::Frame& frame) {
@@ -323,6 +324,57 @@ void handle_client(const std::shared_ptr<ClientSession>& session) {
             const auto delivered = broadcast_frame(delivery);
             log_line(kCyan, "CHAT seq=" + std::to_string(sequence) + " from " +
                 username + "; successful socket sends=" + std::to_string(delivered));
+            break;
+        }
+        case chatproto::Type::PRIVATE_CHAT: {
+            chatproto::Reader reader(frame.payload);
+            std::uint64_t sequence = 0;
+            std::string target, message;
+            if (!reader.get_u64(sequence) || !reader.get_string(target) ||
+                !reader.get_string(message) || !reader.at_end()) {
+                send_error(session, "Malformed PRIVATE_CHAT message.");
+                break;
+            }
+            if (target.empty() || target.size() > chatproto::kMaxUsernameBytes ||
+                contains_control_characters(target) || message.empty() ||
+                trim_ascii_spaces(message).empty() ||
+                message.size() > chatproto::kMaxMessageBytes ||
+                contains_control_characters(message)) {
+                send_error(session, "Private target must be 1-48 UTF-8 bytes; message must be 1-4096 UTF-8 bytes, nonblank, with no control characters.");
+                break;
+            }
+            if (sequence <= session->last_private_sequence) {
+                send_error(session, "Private sequence number must increase for every private message.");
+                break;
+            }
+            session->last_private_sequence = sequence;
+            std::shared_ptr<ClientSession> recipient;
+            for (const auto& candidate : snapshot_clients()) {
+                if (candidate->registered.load() && candidate->alive.load() &&
+                    candidate->username == target) {
+                    recipient = candidate;
+                    break;
+                }
+            }
+            if (!recipient) {
+                send_error(session, "Private recipient is not online.");
+                break;
+            }
+            chatproto::Writer writer;
+            writer.put_u64(sequence);
+            writer.put_string(timestamp_now());
+            writer.put_string(session->username);
+            writer.put_string(recipient->username);
+            writer.put_string(message);
+            const chatproto::Frame delivery{
+                chatproto::Type::PRIVATE_DELIVERY, std::move(writer.data)};
+            // Send to the recipient first; never echo success on a known send failure.
+            // shared_ptr keeps the session alive; send_frame locks socket lifetime.
+            if (!recipient->registered.load() || !recipient->send_frame(delivery)) {
+                send_error(session, "Private recipient disconnected; delivery failed.");
+                break;
+            }
+            if (recipient.get() != session.get()) session->send_frame(delivery);
             break;
         }
         case chatproto::Type::LIST_REQUEST:

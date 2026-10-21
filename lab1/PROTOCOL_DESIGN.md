@@ -61,6 +61,8 @@ String := Length(2 bytes, unsigned big-endian) + UTF-8 bytes
 | 7 | `GOODBYE` | 可选 `String(reason)`；实际客户端发送一个字符串字段 | Client → Server |
 | 8 | `ERROR` | `String(error_text)` | Server → Client |
 | 9 | `LIST_REQUEST` | 空负载 | Client → Server |
+| 10 | `PRIVATE_CHAT` | `UInt64(sequence), String(target_username), String(message)` | Client → Server |
+| 11 | `PRIVATE_DELIVERY` | `UInt64(sequence), String(timestamp), String(sender_username), String(recipient_username), String(message)` | Server → Sender and Recipient |
 
 `UInt64(sequence)` 为 8 字节无符号大端序整数；`UInt16(count)` 为 2 字节无符号大端序整数。
 
@@ -151,6 +153,32 @@ Client A                 Server                  Client B
 - 根据收到的同一发送者序号观察应用层消息缺口或重复。
 
 ## 8. TCP 粘包、半包与丢包分析
+
+私聊功能的详细时序和限制见下节；原有 TCP 收发机制保持不变。
+
+### 私聊时序、序号与安全边界
+
+1. Alice 输入 `/msg Bob 你好 Hello  Bob`，客户端发送类型 10 的 PRIVATE_CHAT。目标用户名后只切分第一个分隔位置，正文内部及额外空格保留。缺少目标、缺少正文、纯空白正文、超长字段或控制字符在本地拒绝。
+2. 服务器使用现有 Reader 校验全部字段和尾部无多余字节；目标限制为 1–48 UTF-8 字节，正文为 1–4096 UTF-8 字节、非空白、无控制字符。发送者身份取自当前已注册 ClientSession，请求没有可伪造的发送者字段。
+3. 从在线会话快照中精确匹配已注册且存活的 Bob，服务器生成时间戳并构造类型 11 的 PRIVATE_DELIVERY。用户名匹配区分大小写；命令语法不支持向带空格的用户名发私聊。
+4. 先向 Bob 发送完整帧；成功后向 Alice 回显相同帧。向自己私聊只投递一次。shared_ptr 保持会话对象有效，现有 send_mutex 保护完整帧发送及 Socket 生命周期，不调用广播函数。
+5. 目标不存在、已离线或发送失败，仅向 Alice 返回类型 8 ERROR（C++ 标识符 ERROR_MESSAGE），错误不包含私聊正文。目标断开由原有清理流程处理；回显发送失败也由现有 send_frame 中止连接。
+
+```text
+Alice                   Server                  Bob             Charlie
+  |-- PRIVATE_CHAT ------>|                       |                 |
+  |                      |-- 验证及在线会话查找 --|                 |
+  |                      |-- PRIVATE_DELIVERY --->|                 |
+  |<-- PRIVATE_DELIVERY --|                       |                 |
+  |-- 离线目标请求 ------>|                       |                 |
+  |<-- ERROR ------------|                       |                 |
+```
+
+CHAT_DELIVERY 向全部在线用户广播；PRIVATE_DELIVERY 仅向双方定向投递，Charlie 不收到私聊。客户端显示时间、序号、正文及 `[PRIVATE OUT] Alice -> Bob` 或 `[PRIVATE IN] Alice -> Bob`。
+
+PRIVATE_CHAT 使用独立的每连接私聊序号，从 1 开始严格递增；CHAT 与 /burst 保持原有群聊序号。服务器分别校验，私聊不加入群聊缺口检测，避免第三方因为看不到私聊而误报。合法但目标离线的请求也消耗私聊序号。原有 1–9 编号和负载字段、版本 1、12 字节帧头均不变，合法类型范围扩展至 1–11。新类型需要新版客户端。
+
+私聊没有额外应用层送达确认机制。Socket 发送成功不保证对方已收到或阅读，发送者回显也不是已读回执。此功能是服务器定向转发，不提供端到端加密，服务器可以读取正文，当前 TCP 连接未启用 TLS。
 
 TCP 提供有序字节流，而非应用消息边界。一次发送可能被拆成多次接收，多次发送也可能在一次接收中被读取。本协议使用固定长度帧头和负载长度字段确定每一帧的边界；`send_all()` 和 `recv_exact()` 循环直到完成指定字节数或检测到连接失败。
 
